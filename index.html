@@ -841,16 +841,30 @@
       transform: translateY(-4px) scale(1.015)
     }
 
-    .gal-img {
+    .gal-img-wrap {
       width: 100%;
-      aspect-ratio: 4/3;
+      position: relative;
+      padding-bottom: 75%; /* 4:3 ratio fallback for iOS Safari */
+      overflow: hidden;
+      background: rgba(0,240,255,.04);
+    }
+
+    .gal-img {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
-      display: block
+      display: block;
+      -webkit-transform: translateZ(0); /* force GPU layer — fixes Safari paint bug */
+      transform: translateZ(0);
     }
 
     .gal-img-placeholder {
+      position: absolute;
+      top: 0; left: 0;
       width: 100%;
-      aspect-ratio: 4/3;
+      height: 100%;
       background: linear-gradient(135deg, rgba(0, 240, 255, .05), rgba(0, 128, 255, .08));
       display: flex;
       flex-direction: column;
@@ -2622,19 +2636,20 @@
       <div class="sec-lbl" style="margin-bottom:16px">📤 Upload Memory</div>
       <div style="display:flex;flex-direction:column;gap:13px">
         <div>
-          <label class="fi-label">Photo</label>
+          <label class="fi-label">Photos <span style="opacity:.5;font-size:.7em">(Select one or more)</span></label>
           <div id="dropZone"
             style="border:2px dashed rgba(0,240,255,.28);border-radius:8px;padding:24px;text-align:center;cursor:none;transition:all .25s"
             onclick="document.getElementById('photoFile').click()"
             ondragover="this.style.borderColor='var(--c)';event.preventDefault()"
             ondragleave="this.style.borderColor='rgba(0,240,255,.28)'" ondrop="handleDrop(event)">
             <div id="dropPreview" style="font-size:2rem;margin-bottom:6px">📷</div>
-            <div style="font-size:.7rem;color:rgba(255,255,255,.35)">Click to choose or drag & drop</div>
-            <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="previewPhoto(this)">
+            <div style="font-size:.7rem;color:rgba(255,255,255,.35)">Click to choose or drag &amp; drop &middot; Multiple allowed</div>
+            <input type="file" id="photoFile" accept="image/*" multiple style="display:none" onchange="previewPhoto(this)">
           </div>
+          <div id="multiPreviewStrip" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px"></div>
         </div>
-        <div><label class="fi-label">Your Name</label><input class="fi" id="upName" placeholder="Enter your name"></div>
-        <div id="upCollege-wrap"><label class="fi-label">School</label><input class="fi" id="upCollege" placeholder="Enter your school name" autocomplete="off"></div>
+        <div><label class="fi-label">Your Name <span style="opacity:.5;font-size:.7em">(Optional)</span></label><input class="fi" id="upName" placeholder="Enter your name (optional)"></div>
+        <div id="upCollege-wrap"><label class="fi-label">School <span style="opacity:.5;font-size:.7em">(Optional)</span></label><input class="fi" id="upCollege" placeholder="Enter your school name (optional)" autocomplete="off"></div>
         <div><label class="fi-label">Caption (Optional)</label><input class="fi" id="upCaption"
             placeholder="Add a caption..."></div>
         <button id="galUploadBtn"
@@ -3034,24 +3049,51 @@ CREATE POLICY "Allow all gallery" ON gallery
 
 
     /* previewPhoto/handleDrop/doUpload are for the gallery upload modal */
-    function previewPhoto(input) {
-      const file = input.files[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = e => {
-        window.uploadPhotoData = e.target.result;
-        document.getElementById('dropPreview').innerHTML = `<img src="${e.target.result}" style="width:80px;height:60px;object-fit:cover;border-radius:6px">`;
-      };
-      reader.readAsDataURL(file);
+    window.uploadPhotoFiles = []; // holds { dataUrl, file } for each selected image
+
+    function renderMultiPreviewStrip() {
+      const strip = document.getElementById('multiPreviewStrip');
+      if (!window.uploadPhotoFiles.length) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+      strip.style.display = 'flex';
+      strip.innerHTML = window.uploadPhotoFiles.map((f, i) =>
+        `<div style="position:relative;display:inline-block">
+          <img src="${f.dataUrl}" style="width:64px;height:56px;object-fit:cover;border-radius:6px;border:1.5px solid rgba(0,240,255,.3)">
+          <button onclick="removeUploadFile(${i})" style="position:absolute;top:-6px;right:-6px;background:#ff4444;border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:.65rem;line-height:18px;text-align:center;cursor:pointer;padding:0">✕</button>
+        </div>`
+      ).join('');
+      document.getElementById('dropPreview').innerHTML = `<span style="font-size:1rem;color:rgba(0,240,255,.8)">${window.uploadPhotoFiles.length} photo${window.uploadPhotoFiles.length > 1 ? 's' : ''} selected</span>`;
     }
+
+    function removeUploadFile(idx) {
+      window.uploadPhotoFiles.splice(idx, 1);
+      renderMultiPreviewStrip();
+      if (!window.uploadPhotoFiles.length) document.getElementById('dropPreview').innerHTML = '📷';
+    }
+
+    function previewPhoto(input) {
+      const files = Array.from(input.files).filter(f => f.type.startsWith('image/'));
+      if (!files.length) return;
+      let loaded = 0;
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          window.uploadPhotoFiles.push({ dataUrl: e.target.result, file });
+          loaded++;
+          if (loaded === files.length) renderMultiPreviewStrip();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
     function handleDrop(e) {
       e.preventDefault();
       document.getElementById('dropZone').style.borderColor = 'rgba(0,240,255,.28)';
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) {
-        const dt = new DataTransfer(); dt.items.add(file);
-        document.getElementById('photoFile').files = dt.files;
-        previewPhoto(document.getElementById('photoFile'));
-      }
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+      if (!files.length) return;
+      const dt = new DataTransfer();
+      files.forEach(f => dt.items.add(f));
+      document.getElementById('photoFile').files = dt.files;
+      previewPhoto(document.getElementById('photoFile'));
     }
 
     async function doUpload() {
@@ -3059,39 +3101,57 @@ CREATE POLICY "Allow all gallery" ON gallery
       const college = document.getElementById('upCollege').value.trim();
       const event = 'general';
       const caption = document.getElementById('upCaption').value.trim();
-      if (!name || !college) { showToast('⚠️ Please enter your name and college.'); return; }
-      if (!window.uploadPhotoData) { showToast('⚠️ Please select a photo.'); return; }
+      if (!window.uploadPhotoFiles || !window.uploadPhotoFiles.length) { showToast('⚠️ Please select at least one photo.'); return; }
 
       const uploadBtn = document.getElementById('galUploadBtn');
-      if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '⏳ UPLOADING...'; }
+      const total = window.uploadPhotoFiles.length;
+      let done = 0;
 
-      try {
-        console.log('🚀 Starting upload, data length:', window.uploadPhotoData.length);
-        const imgUrl = await uploadToCloudinary(window.uploadPhotoData);
-        console.log('✅ Got Cloudinary URL:', imgUrl);
-        const photo = {
-          id: Date.now() + Math.random(),
-          name, college, event, caption,
-          src: imgUrl,
-          likes: 0, likedBy: [],
-          status: 'pending',
-          ts: nowIST()
-        };
-        await addGalleryPhoto(photo);
+      if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = `⏳ UPLOADING 0/${total}...`; }
+
+      const filesToUpload = [...window.uploadPhotoFiles];
+      let anyFailed = false;
+
+      for (const { dataUrl } of filesToUpload) {
+        try {
+          console.log('🚀 Starting upload', done + 1, '/', total);
+          const imgUrl = await uploadToCloudinary(dataUrl);
+          console.log('✅ Got Cloudinary URL:', imgUrl);
+          const photo = {
+            id: Date.now() + Math.random(),
+            name, college, event, caption,
+            src: imgUrl,
+            likes: 0, likedBy: [],
+            status: 'pending',
+            ts: nowIST()
+          };
+          await addGalleryPhoto(photo);
+          done++;
+          if (uploadBtn) uploadBtn.textContent = `⏳ UPLOADING ${done}/${total}...`;
+        } catch (e) {
+          console.error('Upload error:', e);
+          anyFailed = true;
+          showToast('❌ ' + (e.message || 'Upload failed for one photo'));
+        }
+      }
+
+      if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = '📤 Upload Memory'; }
+      if (done > 0) {
         closeUploadModal();
         renderGallery();
-        showToast('📤 Photo submitted for review!');
-      } catch (e) {
-        console.error('Upload error:', e);
-        showToast('❌ ' + (e.message || 'Upload failed'));
-      } finally {
-        if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = '📤 Upload Memory'; }
+        showToast(`📤 ${done} photo${done > 1 ? 's' : ''} submitted for review!`);
       }
     }
 
 
     function setGalFilter(f, btn) { galFilter = f; document.querySelectorAll('.gal-filter-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderGallery() }
     function toggleTopLiked() { galSortTopLiked = !galSortTopLiked; document.getElementById('topLikedBtn').classList.toggle('active', galSortTopLiked); renderGallery() }
+
+    /* Inject Cloudinary auto-format transform so iOS gets JPEG, not HEIC/webp */
+    function cloudinarySrc(url) {
+      if (!url || !url.includes('res.cloudinary.com')) return url;
+      return url.replace('/upload/', '/upload/f_auto,q_auto/');
+    }
 
     function renderGallery() {
       const grid = document.getElementById('galGrid'), empty = document.getElementById('galEmpty');
@@ -3106,11 +3166,15 @@ CREATE POLICY "Allow all gallery" ON gallery
       grid.innerHTML = filtered.map((p, i) => {
         const liked = p.likedBy && p.likedBy.includes(myId);
         const evLabel = p.event && p.event !== 'general' ? p.event.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : '';
+        const imgSrc = cloudinarySrc(p.src);
         return `<div class="gal-card" style="animation-delay:${i * .06}s" onclick="openLightbox(${galPhotos.indexOf(p)})">
-      <img src="${p.src}" class="gal-img" alt="${p.name}" loading="lazy">
+      <div class="gal-img-wrap">
+        <img src="${imgSrc}" class="gal-img" alt="${p.name || ''}" crossorigin="anonymous"
+          onerror="this.onerror=null;this.src='${p.src}'">
+      </div>
       <div class="gal-info">
-        <div class="gal-name">${p.name}</div>
-        <div class="gal-meta">🏫 ${p.college} · ${new Date(p.ts).toLocaleDateString()}</div>
+        <div class="gal-name">${p.name || ''}</div>
+        <div class="gal-meta">🏫 ${p.college || ''} · ${new Date(p.ts).toLocaleDateString()}</div>
         ${p.caption ? `<div style="font-size:.72rem;color:rgba(255,255,255,.42);margin-bottom:8px;font-style:italic">"${p.caption}"</div>` : ''}
         <div class="gal-actions">
           <button class="like-btn${liked ? ' liked' : ''}" onclick="likePhoto(event,${galPhotos.indexOf(p)})" title="Like">
@@ -3146,7 +3210,7 @@ CREATE POLICY "Allow all gallery" ON gallery
     function openLightbox(idx) {
       const p = galPhotos[idx]; if (!p) return;
       lbIdx = idx;
-      document.getElementById('lbImg').src = p.src;
+      document.getElementById('lbImg').src = cloudinarySrc(p.src);
       document.getElementById('lbInfo').innerHTML = `<strong>${p.name}</strong> · ${p.college}${p.caption ? ' · "' + p.caption + '"' : ''}`;
       document.getElementById('lightbox').style.display = 'flex';
     }
@@ -3184,7 +3248,9 @@ CREATE POLICY "Allow all gallery" ON gallery
       document.getElementById('adminStats').textContent = `📸 Photos: ${pending.length} pending · ${approved.length} approved · ${galPhotos.length} total  |  🏆 Scores: ${scores.length} entries`;
       document.getElementById('adminGrid').innerHTML = [...pending, ...approved].map(p => `
     <div class="admin-card">
-      <img src="${p.src}" style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block">
+      <div style="width:100%;position:relative;padding-bottom:75%;overflow:hidden;background:rgba(0,240,255,.04)">
+        <img src="${cloudinarySrc(p.src)}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;display:block;-webkit-transform:translateZ(0);transform:translateZ(0)" onerror="this.onerror=null;this.src='${p.src}'">
+      </div>
       <div style="padding:8px 10px"><div style="font-size:.72rem;font-weight:600;margin-bottom:2px">${p.name}</div>
       <div style="font-size:.62rem;color:rgba(255,255,255,.35);margin-bottom:6px">${p.college} · ${p.event || 'general'}</div>
       <div style="font-size:.6rem;padding:2px 7px;border-radius:3px;display:inline-block;margin-bottom:6px;background:${p.status === 'pending' ? 'rgba(255,149,0,.15)' : 'rgba(34,197,94,.12)'};border:1px solid ${p.status === 'pending' ? 'rgba(255,149,0,.35)' : 'rgba(34,197,94,.28)'};color:${p.status === 'pending' ? '#ff9500' : '#22c55e'}">${p.status.toUpperCase()}</div></div>
@@ -4177,8 +4243,12 @@ CREATE POLICY "Allow all gallery" ON gallery
     }
     function closeUploadModal() {
       document.getElementById('uploadModal').style.display = 'none';
+      window.uploadPhotoFiles = [];
       window.uploadPhotoData = null;
       document.getElementById('dropPreview').innerHTML = '📷';
+      const strip = document.getElementById('multiPreviewStrip');
+      if (strip) { strip.style.display = 'none'; strip.innerHTML = ''; }
+      document.getElementById('photoFile').value = '';
       document.getElementById('upName').value = '';
       document.getElementById('upCollege').value = '';
       document.getElementById('upCaption').value = '';
