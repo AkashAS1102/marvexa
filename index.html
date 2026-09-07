@@ -1056,6 +1056,7 @@
       align-items: center;
       gap: 20px
     }
+    @keyframes spin { to { transform: rotate(360deg) } }
 
     /* Admin panel */
     #adminPanel {
@@ -2664,7 +2665,11 @@
     <button onclick="closeLightbox()"
       style="position:absolute;top:20px;right:20px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.6);border-radius:50%;width:36px;height:36px;font-size:1.1rem;cursor:none;transition:all .2s"
       onmouseenter="this.style.color='#fff'" onmouseleave="this.style.color='rgba(255,255,255,.6)'">✕</button>
-    <img id="lbImg" src="" alt="" class="lb-img">
+    <img id="lbImg" src="" alt="" class="lb-img" style="display:none" onload="this.style.display='';document.getElementById('lbSpinner').style.display='none'" onerror="this.style.display='';document.getElementById('lbSpinner').style.display='none'">
+    <div id="lbSpinner" style="display:none;flex-direction:column;align-items:center;gap:14px">
+      <div style="width:48px;height:48px;border:3px solid rgba(0,240,255,.2);border-top-color:#00f0ff;border-radius:50%;animation:spin .8s linear infinite"></div>
+      <span style="color:rgba(255,255,255,.45);font-family:'Orbitron',sans-serif;font-size:.65rem;letter-spacing:1.5px">LOADING…</span>
+    </div>
     <div id="lbInfo" style="text-align:center;color:rgba(255,255,255,.55);font-size:.82rem"></div>
     <div class="lb-nav">
       <button onclick="lbPrev()"
@@ -3114,6 +3119,25 @@ CREATE POLICY "Allow all gallery" ON gallery
       previewPhoto(document.getElementById('photoFile'));
     }
 
+    /* Compress image to stay under Cloudinary's 10 MB limit */
+    function compressImage(dataUrl, maxPx = 1920, quality = 0.82) {
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          let { width: w, height: h } = img;
+          if (w > maxPx || h > maxPx) {
+            if (w > h) { h = Math.round(h * maxPx / w); w = maxPx; }
+            else       { w = Math.round(w * maxPx / h); h = maxPx; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = dataUrl;
+      });
+    }
+
     async function doUpload() {
       const name = document.getElementById('upName').value.trim();
       const college = document.getElementById('upCollege').value.trim();
@@ -3133,7 +3157,8 @@ CREATE POLICY "Allow all gallery" ON gallery
       for (const { dataUrl } of filesToUpload) {
         try {
           console.log('🚀 Starting upload', done + 1, '/', total);
-          const imgUrl = await uploadToCloudinary(dataUrl);
+          const compressed = await compressImage(dataUrl);
+          const imgUrl = await uploadToCloudinary(compressed);
           console.log('✅ Got Cloudinary URL:', imgUrl);
           const photo = {
             id: Date.now() + Math.random(),
@@ -3207,8 +3232,7 @@ CREATE POLICY "Allow all gallery" ON gallery
       }).join('');
     }
 
-    // Auto-refresh gallery every 30 seconds so all devices see new photos
-    setInterval(() => { if (window.__SB) loadGallery(); }, 30000);
+    // Auto-refresh removed — gallery only loads on initial load
 
     let myId = null;
     function getMyId() { if (!myId) { myId = localStorage.getItem('marvexa_uid') || ('u' + Date.now()); localStorage.setItem('marvexa_uid', myId) } return myId }
@@ -3230,7 +3254,11 @@ CREATE POLICY "Allow all gallery" ON gallery
     function openLightbox(idx) {
       const p = galPhotos[idx]; if (!p) return;
       lbIdx = idx;
-      document.getElementById('lbImg').src = cloudinarySrc(p.src);
+      const img = document.getElementById('lbImg');
+      const spinner = document.getElementById('lbSpinner');
+      img.style.display = 'none';
+      spinner.style.display = 'flex';
+      img.src = cloudinarySrc(p.src);
       document.getElementById('lbInfo').innerHTML = `<strong>${p.name}</strong> · ${p.college}${p.caption ? ' · "' + p.caption + '"' : ''}`;
       document.getElementById('lightbox').style.display = 'flex';
     }
